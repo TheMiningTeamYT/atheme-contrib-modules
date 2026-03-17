@@ -12,7 +12,7 @@
 .SUFFIXES: ${PLUGIN_SUFFIX}
 
 plugindir = ${MODDIR}/modules/${MODULE}
-PLUGIN=${SRCS:.c=${PLUGIN_SUFFIX}}
+PLUGIN=$(addsuffix ${PLUGIN_SUFFIX},$(basename ${SRCS}))
 
 all: ${PLUGIN}
 install: ${PLUGIN}
@@ -21,6 +21,14 @@ phase_cmd_cc_module = CompileModule
 quiet_cmd_cc_module = $@
       cmd_cc_module = ${CC} ${DEPFLAGS} ${CFLAGS} ${PLUGIN_CFLAGS} ${CPPFLAGS} ${PLUGIN_LDFLAGS} ${LDFLAGS} -o $@ $< ${LIBS}
 
+phase_cmd_cxx_module = CompileModule
+quiet_cmd_cxx_module = $@
+      cmd_cxx_module = ${CXX} ${DEPFLAGS} ${CFLAGS} ${PLUGIN_CFLAGS} ${CXXFLAGS} ${CPPFLAGS} ${PLUGIN_LDFLAGS} ${LDFLAGS} -o $@ $< ${LIBS}
+
 .c${PLUGIN_SUFFIX}:
 	$(call echo-cmd,cmd_cc_module)
 	$(cmd_cc_module)
+
+.cxx${PLUGIN_SUFFIX} .cpp${PLUGIN_SUFFIX}:
+	$(call echo-cmd,cmd_cxx_module)
+	$(cmd_cxx_module)

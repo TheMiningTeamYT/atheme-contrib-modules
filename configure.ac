@@ -23,6 +23,7 @@ AC_PROG_CC_C99
 AS_IF([test "x${ac_cv_prog_cc_c99}" = "xno"], [
     AC_MSG_FAILURE([This program requires a C99 compiler])
 ])
+AC_PROG_CXX
 AC_CHECK_TOOL([AR], [ar])
 AC_PATH_PROG([CP], [cp])
 AC_PROG_INSTALL

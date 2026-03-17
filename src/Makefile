@@ -10,7 +10,7 @@ include ../extra.mk
 
 DISTCLEAN   = contrib-sysconf.h
 MODULE      = contrib
-SRCS        = $(wildcard *.c)
+SRCS        = $(wildcard *.c *.cxx *.cpp)
 
 include ../buildsys.mk
 include ../buildsys.module.mk

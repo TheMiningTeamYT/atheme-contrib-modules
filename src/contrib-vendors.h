@@ -48,6 +48,7 @@
  */
 #define CONTRIB_VENDOR_NENOLOD          "William Pitcock <nenolod -at- nenolod.net>"
 
-
+// backlog.cpp
+#define CONTRIB_VENDOR_LOGANIUS         "Logan C. <loganisamazing -at- outlook.com>"
 
 #endif /* !ATHEME_CONTRIB_VENDORS_H */
