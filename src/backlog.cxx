@@ -31,9 +31,15 @@ static std::map<std::string, Channel> channels;
 static void saw(const char* nick, const char* channel) {
     std::time_t now = std::time(nullptr);
     try {
-        channels.at(channel).users.at(nick) = now;
+        Channel &channelStruct = channels.at(channel);
+        try {
+            channelStruct.users.at(nick) = now;
+        } catch (const std::out_of_range& e) {
+            channelStruct.users.insert({nick, now});
+        }
     } catch (const std::out_of_range& e) {
-        channels.at(channel).users.insert({nick, now});
+        channels.insert({channel, {{{nick, now}}, {}}});
+        join(channel, backlog->nick);
     }
 }
 
@@ -50,6 +56,7 @@ static void insert_message(const char* channel, const char* nick, const char* co
          * (We can assume the user is online if they're sending a message.)
          */
         channels.insert({channel, {{{nick, now}}, {message}} });
+        join(channel, backlog->nick);
     }
 }
 
@@ -89,10 +96,10 @@ static void send_backlog(const char* nick, const char* channel) {
                     } else {
                         std::strftime(timestamp, sizeof(timestamp), "%r %B %d, %Y %Z", sent);
                     }
-                    msg("BacklogServ", nick, "Backlog for %s since %s.", channel, timestamp);
+                    msg(backlog->nick, nick, "Backlog for %s since %s.", channel, timestamp);
                     sentTimestamp = true;
                 }
-                msg(message.nick.c_str(), nick, "%s", message.content.c_str());
+                msg(backlog->nick, nick, "%s: %s", message.nick.c_str(), message.content.c_str());
             }
         }
     }
@@ -113,6 +120,7 @@ static void on_part(hook_channel_joinpart_t *part) {
 }
 
 static void mod_init(module_t *m) {
+    backlog = service_add("BacklogServ", NULL);
     hook_add_event("channel_message");
     hook_add_event("channel_join");
     hook_add_event("channel_part");
