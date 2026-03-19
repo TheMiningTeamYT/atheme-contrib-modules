@@ -1,3 +1,17 @@
+/*
+ * SPDX-License-Identifier: ISC
+ * SPDX-URL: https://spdx.org/licenses/ISC.html
+ *
+ * Copyright (C) 2026 Logan C. (loganisamazing@outlook.com)
+ *
+ * A bot which records all the messages in one or more channels
+ * and replays them to users when they join.
+ * 
+ * TODO:
+ * Allow admins to set a custom server-wide backlog length.
+ * Use mowgli lists like the rest of Atheme instead of maps & vectors.
+ */
+
 extern "C" {
     #include "atheme-compat.h"
 }
@@ -9,11 +23,6 @@ extern "C" {
 #include <string>
 #include <stdexcept>
 
-/* 
- * TODO:
- * Allow admins to set a custom server-wide backlog length.
- * Use mowgli lists like the rest of Atheme instead of maps & vectors.
- */
 /* A single message sent in a channel. */
 struct Message {
     std::time_t sent;
@@ -105,9 +114,7 @@ static void send_backlog(user_t *user, const char* channel, int length, bool all
     if (!all) {
         try {
             since = channels.at(channel).users.at(user->nick);
-        } catch (const std::out_of_range& e) {
-            since = 0;
-        }
+        } catch (const std::out_of_range& e) {}
     }
 
     for (size_t i = log->size(); i > 0; i--) {
