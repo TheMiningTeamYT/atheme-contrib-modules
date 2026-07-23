@@ -17,7 +17,7 @@ extern "C" {
 }
 
 #include <vector>
-#include <map>
+#include <unordered_map>
 #include <ctime>
 #include <cstdlib>
 #include <string>
@@ -36,15 +36,18 @@ struct Message {
  */
 struct Channel {
     /* Nick : Time last seen */
-    std::map<std::string, std::time_t> users;
+    std::unordered_map<std::string, std::time_t> users;
     std::vector<Message> log;
 };
 
-static service_t *backlog = NULL;
-static std::map<std::string, Channel> channels;
+struct {
+    service_t *me;
+} backlog;
+
+static std::unordered_map<std::string, Channel> channels;
 
 /* The default backlog length. */
-static int backlogLength = 100;
+static unsigned int backlogLength = 100;
 
 /* Allow BacklogServ to record a channel's backlog. */
 #define BACKLOG_ENABLE_MD "backlog:enable"
@@ -72,7 +75,7 @@ static void saw(const char* nick, const char* channel) {
         }
     } catch (const std::out_of_range& e) {
         channels.insert({channel, {{{nick, now}}, {}}});
-        join(channel, backlog->nick);
+        join(channel, backlog.me->nick);
     }
 }
 
@@ -89,11 +92,11 @@ static void insert_message(const char* channel, const char* nick, const char* co
          * (We can assume the user is online if they're sending a message.)
          */
         channels.insert({channel, {{{nick, now}}, {message}} });
-        join(channel, backlog->nick);
+        join(channel, backlog.me->nick);
     }
 }
 
-static void send_backlog(user_t *user, const char* channel, int length, bool all) {
+static void send_backlog(user_t *user, const char* channel, unsigned int length, bool all) {
     std::time_t since = 0;
     /* 
      * Is this pointer safe?
@@ -131,11 +134,11 @@ static void send_backlog(user_t *user, const char* channel, int length, bool all
                         std::strftime(timestamp, sizeof(timestamp), "%r %Z", sent);
                     }
                     snprintf(buf, sizeof(buf), "Backlog for %s since %s.", channel, timestamp);
-                    notice_user_sts(backlog->me, user, buf);
+                    notice_user_sts(backlog.me->me, user, buf);
                     sentTimestamp = true;
                 }
-                snprintf(buf, sizeof(buf), "\02%s\02: %s", message.nick.c_str(), message.content.c_str());
-                notice_user_sts(backlog->me, user, buf);
+                snprintf(buf, sizeof(buf), "[%s] \02%s\02: %s", channel, message.nick.c_str(), message.content.c_str());
+                notice_user_sts(backlog.me->me, user, buf);
             }
         }
     }
@@ -153,14 +156,14 @@ static mychan_t *chan_cmd_check_permissions(struct sourceinfo *si, int parc, cha
 
     if (parc != 1 || (name = parv[0]) == nullptr) {
         command_fail(si, fault_needmoreparams, STR_INSUFFICIENT_PARAMS, cmdName);
-		command_fail(si, fault_needmoreparams, _("Syntax: %s %s <#channel>"), backlog->nick, cmdName);
+		command_fail(si, fault_needmoreparams, _("Syntax: %s %s <#channel>"), backlog.me->nick, cmdName);
 		return nullptr;
     }
 
     /* Make sure the name specified is actually a channel name. */
     if (name[0] != '#') {
         command_fail(si, fault_badparams, STR_INVALID_PARAMS, cmdName);
-		command_fail(si, fault_badparams, _("Syntax: %s %s <#channel>"), backlog->nick, cmdName);
+		command_fail(si, fault_badparams, _("Syntax: %s %s <#channel>"), backlog.me->nick, cmdName);
 		return nullptr;
     }
 
@@ -200,7 +203,7 @@ static void on_message(hook_cmessage_data_t *msg) {
             return;
 
         insert_message(msg->c->name, msg->u->nick, msg->msg);
-        slog(LG_DEBUG, "%s: Saw message from %s.", backlog->nick, msg->u->nick);
+        slog(LG_DEBUG, "%s: Saw message from %s.", backlog.me->nick, msg->u->nick);
         /* Should be unecessary if we log them when they join and when they leave. -Loganius */
         /* saw(msg->u->nick, msg->c->name); */
     }
@@ -210,7 +213,7 @@ static void on_join(hook_channel_joinpart_t *join) {
     mychan_t *mc = join->cu->chan->mychan;
     void* user = join->cu->user->myuser ? (void*)join->cu->user->myuser : join->cu->user;
     metadata_t *md;
-    int length = backlogLength;
+    unsigned int length = backlogLength;
 
     /* 
      * Only send the backlog for channels which we have been attached to
@@ -286,7 +289,7 @@ static void cmd_join(struct sourceinfo *si, int parc, char *parv[]) {
 
     /* Make sure we aren't already in the channel. */
     if (metadata_find(mc, BACKLOG_ENABLE_MD)) {
-        command_fail(si, fault_alreadyexists, _("%s is already recording %s."), backlog->nick, mc->chan->name);
+        command_fail(si, fault_alreadyexists, _("%s is already recording %s."), backlog.me->nick, mc->chan->name);
         return;
     }
 
@@ -296,8 +299,8 @@ static void cmd_join(struct sourceinfo *si, int parc, char *parv[]) {
         return;
     }
 
-    join(mc->chan->name, backlog->nick);
-    command_success_nodata(si, _("%s has successfully joined %s"), backlog->nick, mc->chan->name);
+    join(mc->chan->name, backlog.me->nick);
+    command_success_nodata(si, _("%s has successfully joined %s"), backlog.me->nick, mc->chan->name);
 }
 
 /* Remove BacklogServ from a channel. */
@@ -312,7 +315,7 @@ static void cmd_leave(struct sourceinfo *si, int parc, char *parv[]) {
 
     /* Make sure we are currently in the channel. */
     if (!metadata_find(mc, BACKLOG_ENABLE_MD)) {
-        command_fail(si, fault_alreadyexists, _("%s is not currently in %s."), backlog->nick, name);
+        command_fail(si, fault_alreadyexists, _("%s is not currently in %s."), backlog.me->nick, name);
         return;
     }
 
@@ -320,8 +323,8 @@ static void cmd_leave(struct sourceinfo *si, int parc, char *parv[]) {
     metadata_delete(mc, BACKLOG_ENABLE_MD);
     channels.erase(name);
 
-    part(name, backlog->nick);
-    command_success_nodata(si, _("%s has successfully left %s."), backlog->nick, name);
+    part(name, backlog.me->nick);
+    command_success_nodata(si, _("%s has successfully left %s."), backlog.me->nick, name);
 }
 
 /* Stop BacklogServ from sending the backlog automatically. */
@@ -339,7 +342,7 @@ static void cmd_silence(struct sourceinfo *si, int parc, char *parv[]) {
 
     /* Make sure we are currently in the channel. */
     if (!(md = metadata_find(mc, BACKLOG_ENABLE_MD))) {
-        command_fail(si, fault_alreadyexists, _("%s is not currently in %s."), backlog->nick, name);
+        command_fail(si, fault_alreadyexists, _("%s is not currently in %s."), backlog.me->nick, name);
         return;
     }
 
@@ -353,7 +356,7 @@ static void cmd_silence(struct sourceinfo *si, int parc, char *parv[]) {
 
     /* Make sure BacklogServ isn't already silenced. */
     if (!(mode & BACKLOG_AUTOSEND)) {
-        command_fail(si, fault_alreadyexists, _("%s is already silenced in %s."), backlog->nick, name);
+        command_fail(si, fault_alreadyexists, _("%s is already silenced in %s."), backlog.me->nick, name);
         return;
     }
 
@@ -363,7 +366,7 @@ static void cmd_silence(struct sourceinfo *si, int parc, char *parv[]) {
         return;
     }
 
-    command_success_nodata(si, _("%s was successfully silenced in %s."), backlog->nick, name);
+    command_success_nodata(si, _("%s was successfully silenced in %s."), backlog.me->nick, name);
 }
 
 /* Allow BacklogServ to send the backlog automatically. */
@@ -381,7 +384,7 @@ static void cmd_unsilence(struct sourceinfo *si, int parc, char *parv[]) {
 
     /* Make sure we are currently in the channel. */
     if (!(md = metadata_find(mc, BACKLOG_ENABLE_MD))) {
-        command_fail(si, fault_alreadyexists, _("%s is not currently in %s."), backlog->nick, name);
+        command_fail(si, fault_alreadyexists, _("%s is not currently in %s."), backlog.me->nick, name);
         return;
     }
 
@@ -395,7 +398,7 @@ static void cmd_unsilence(struct sourceinfo *si, int parc, char *parv[]) {
 
     /* Make sure BacklogServ isn't already unsilenced. */
     if (mode & BACKLOG_AUTOSEND) {
-        command_fail(si, fault_alreadyexists, _("%s is already allowed to send the backlog in %s."), backlog->nick, name);
+        command_fail(si, fault_alreadyexists, _("%s is already allowed to send the backlog in %s."), backlog.me->nick, name);
         return;
     }
 
@@ -405,7 +408,7 @@ static void cmd_unsilence(struct sourceinfo *si, int parc, char *parv[]) {
         return;
     }
 
-    command_success_nodata(si, _("%s was successfully unsilenced in %s."), backlog->nick, name);
+    command_success_nodata(si, _("%s was successfully unsilenced in %s."), backlog.me->nick, name);
 }
 
 /* Stop BacklogServ from recording users' messages automatically. */
@@ -422,7 +425,7 @@ static void cmd_mute(struct sourceinfo *si, int parc, char *parv[]) {
         command_fail(si, fault_internalerror, _("An internal error occured in %s at line %d."), __FILE__, __LINE__);
         return;
     }
-    command_success_nodata(si, _("You have been muted. %s will no longer pay attention to you."), backlog->nick);
+    command_success_nodata(si, _("You have been muted. %s will no longer pay attention to you."), backlog.me->nick);
 }
 
 /* Allow BacklogServ to record users' messages automatically. */
@@ -436,7 +439,7 @@ static void cmd_unmute(struct sourceinfo *si, int parc, char *parv[]) {
 
     /* Undeafen them. */
     metadata_delete(user, BACKLOG_MUTE_MD);
-    command_success_nodata(si, _("You have been unmuted. %s will record your activity."), backlog->nick);
+    command_success_nodata(si, _("You have been unmuted. %s will record your activity."), backlog.me->nick);
 }
 
 /* Stop BacklogServ from sending the backlog to users automatically. */
@@ -453,7 +456,7 @@ static void cmd_deafen(struct sourceinfo *si, int parc, char *parv[]) {
         command_fail(si, fault_internalerror, _("An internal error occured in %s at line %d."), __FILE__, __LINE__);
         return;
     }
-    command_success_nodata(si, _("You have been deafened. %s will not send the backlog to you."), backlog->nick);
+    command_success_nodata(si, _("You have been deafened. %s will not send the backlog to you."), backlog.me->nick);
 }
 
 /* Allow BacklogServ to send the backlog to users automatically. */
@@ -467,7 +470,7 @@ static void cmd_undeafen(struct sourceinfo *si, int parc, char *parv[]) {
 
     /* Undeafen them. */
     metadata_delete(user, BACKLOG_DEAFEN_MD);
-    command_success_nodata(si, _("You have been undeafened. %s will send the backlog to you."), backlog->nick);
+    command_success_nodata(si, _("You have been undeafened. %s will send the backlog to you."), backlog.me->nick);
 }
 
 /* Send the backlog to the user. */
@@ -475,7 +478,7 @@ static void cmd_send(struct sourceinfo *si, int parc, char *parv[]) {
     mychan_t *mc;
     char *name;
     void* user = si->smu ? (void*)si->smu : si->su;
-    int length = backlogLength;
+    unsigned int length = backlogLength;
 
     if (parc < 1 || (name = parv[0]) == nullptr) {
         command_fail(si, fault_needmoreparams, STR_INSUFFICIENT_PARAMS, "SEND");
@@ -486,7 +489,7 @@ static void cmd_send(struct sourceinfo *si, int parc, char *parv[]) {
     /* Make sure the name specified is actually a channel name. */
     if (name[0] != '#') {
         command_fail(si, fault_badparams, STR_INVALID_PARAMS, "SEND");
-		command_fail(si, fault_badparams, _("Syntax: %s SEND <#channel> [length]"), backlog->nick);
+		command_fail(si, fault_badparams, _("Syntax: %s SEND <#channel> [length]"), backlog.me->nick);
 		return;
     }
 
@@ -501,7 +504,7 @@ static void cmd_send(struct sourceinfo *si, int parc, char *parv[]) {
 
     /* Make sure we are currently in the channel. */
     if (!metadata_find(mc, BACKLOG_ENABLE_MD)) {
-        command_fail(si, fault_badparams, _("%s is not currently in %s."), backlog->nick, name);
+        command_fail(si, fault_badparams, _("%s is not currently in %s."), backlog.me->nick, name);
         return;
     }
     
@@ -539,7 +542,7 @@ static void cmd_length(struct sourceinfo *si, int parc, char *parv[]) {
     for (size_t i = 0; len[i]; i++) {
         if (!isdigit(len[i]) || i > 8) {
             command_fail(si, fault_badparams, STR_INVALID_PARAMS, "LENGTH");
-            command_fail(si, fault_badparams, _("Syntax: %s LENGTH <length:number>"), backlog->nick);
+            command_fail(si, fault_badparams, _("Syntax: %s LENGTH <length:number>"), backlog.me->nick);
             return;
         }
     }
@@ -657,23 +660,25 @@ static command_t backlog_help = {
 };
 
 static void mod_init(module_t *m) {
-    backlog = service_add("BacklogServ", NULL);
+    backlog.me = service_add("BacklogServ", NULL);
 	hook_add_channel_message(on_message);
     hook_add_channel_join(on_join);
     hook_add_channel_part(on_part);
     hook_add_user_delete(on_del);
 
-    service_bind_command(backlog, &backlog_join);
-    service_bind_command(backlog, &backlog_leave);
-    service_bind_command(backlog, &backlog_silence);
-    service_bind_command(backlog, &backlog_unsilence);
-    service_bind_command(backlog, &backlog_mute);
-    service_bind_command(backlog, &backlog_unmute);
-    service_bind_command(backlog, &backlog_deafen);
-    service_bind_command(backlog, &backlog_undeafen);
-    service_bind_command(backlog, &backlog_send);
-    service_bind_command(backlog, &backlog_length);
-    service_bind_command(backlog, &backlog_help);
+    add_uint_conf_item("LENGTH", &backlog.me->conf_table, 0, &backlogLength, 1, 1000000000, 100);
+
+    service_bind_command(backlog.me, &backlog_join);
+    service_bind_command(backlog.me, &backlog_leave);
+    service_bind_command(backlog.me, &backlog_silence);
+    service_bind_command(backlog.me, &backlog_unsilence);
+    service_bind_command(backlog.me, &backlog_mute);
+    service_bind_command(backlog.me, &backlog_unmute);
+    service_bind_command(backlog.me, &backlog_deafen);
+    service_bind_command(backlog.me, &backlog_undeafen);
+    service_bind_command(backlog.me, &backlog_send);
+    service_bind_command(backlog.me, &backlog_length);
+    service_bind_command(backlog.me, &backlog_help);
 }
 
 static void mod_deinit(const module_unload_intent_t intent) {
@@ -682,19 +687,19 @@ static void mod_deinit(const module_unload_intent_t intent) {
     hook_del_channel_part(on_part);
     hook_del_user_delete(on_del);
 
-    service_unbind_command(backlog, &backlog_join);
-    service_unbind_command(backlog, &backlog_leave);
-    service_unbind_command(backlog, &backlog_silence);
-    service_unbind_command(backlog, &backlog_unsilence);
-    service_unbind_command(backlog, &backlog_mute);
-    service_unbind_command(backlog, &backlog_unmute);
-    service_unbind_command(backlog, &backlog_deafen);
-    service_unbind_command(backlog, &backlog_undeafen);
-    service_unbind_command(backlog, &backlog_send);
-    service_unbind_command(backlog, &backlog_length);
-    service_unbind_command(backlog, &backlog_help);
+    service_unbind_command(backlog.me, &backlog_join);
+    service_unbind_command(backlog.me, &backlog_leave);
+    service_unbind_command(backlog.me, &backlog_silence);
+    service_unbind_command(backlog.me, &backlog_unsilence);
+    service_unbind_command(backlog.me, &backlog_mute);
+    service_unbind_command(backlog.me, &backlog_unmute);
+    service_unbind_command(backlog.me, &backlog_deafen);
+    service_unbind_command(backlog.me, &backlog_undeafen);
+    service_unbind_command(backlog.me, &backlog_send);
+    service_unbind_command(backlog.me, &backlog_length);
+    service_unbind_command(backlog.me, &backlog_help);
 
-	service_delete(backlog);
+	service_delete(backlog.me);
 }
 
 VENDOR_DECLARE_MODULE_V1("contrib/backlog", MODULE_UNLOAD_CAPABILITY_OK, CONTRIB_VENDOR_LOGANIUS)
